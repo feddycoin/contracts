@@ -23,8 +23,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     EnumerableMap.AddressToUintMap private _addressToBlockNumber;
 
     uint256 private constant SCALE = 1e18;
-    uint256 private  constant BLOCK_INTERVAL = 5; // Test interval set for 5 blocks
-    // uint256 public constant BLOCK_INTERVAL = 2592000; //Default interval to 30 days.
+    uint256 public constant BLOCK_INTERVAL = 1296000; // Default reward/burn interval is 30 days.
     uint256 public burnBlock;
     uint256 public burnPercent = 2;
     uint256 public rewardPercent = 2;
@@ -33,14 +32,17 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     event NewRewardBlock(address indexed addr, uint256 blockNumber);
     event TokensRewarded(address indexed addr, uint256 amount);
     event NewBurnBlock(uint256 blockNumber);
-    event TokensBurned(address indexed owner, uint256 amount);
+    event TokensBurned(address indexed addr, uint256 amount);
 
     /** 
     *
     * PURPOSE:
-    *   - Rewards tokens from Treasury.
+    *   - Rewards tokens from Treasury
     * INFO:
-    *   - Each token holder can reward themselves tokens from Treasury every 2592000 blocks (approx. 30 days)
+    *   - Each token holder can reward themselves tokens from Treasury every 1296000 blocks (approx. 30 days)
+    *   - This function needs to be run by every new token holder to set an initial reward block
+    *   - If holder receives tokens from another address, they will need to create a new initial reward block
+    *   - Contract owner cannot collect rewards
     *
     */     
     function rewardTokens() public {
@@ -80,10 +82,12 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     *   - Burns tokens from Treasury.
     *
     * INFO:
-    *   - Anyone can instruct the contract to burn 2% of the Treasury every 2592000 blocks (approx. 30 days)
+    *   - Anyone can instruct the contract to burn 2% of the Treasury every 1296000 blocks (approx. 30 days)
+    *   - Contract owner cannot burn tokens
     *
     */     
     function burnTokens() public {
+        require(_msgSender() != owner(), "Sender cannot be contract owner");
         require(block.number >= burnBlock, "Burn interval not reached");
 
         uint256 ownerBalance = balanceOf(owner());
@@ -128,6 +132,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     */
     function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
         require(_canTransfer(_msgSender()), "Sender is contract owner. Transfer aborted.");
+        require(_removeRewardBlock(_msgSender(), recipient), "Cannot remove reward block. Transfer aborted.");
         return super.transfer(recipient, amount);
     }
 
@@ -145,6 +150,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
         uint256 amount
     ) public virtual override returns (bool) {
         require(_canTransfer(sender), "Sender is contract owner. Transfer aborted.");
+        require(_removeRewardBlock(sender, recipient), "Cannot remove reward block. Transfer aborted.");
         return super.transferFrom(sender, recipient, amount);
     }
 
@@ -166,6 +172,23 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     /** 
     *
     * PURPOSE:
+    *   - Removes the reward block for an address.
+    * INFO:
+    *   - If an address receives funds from an address other than the contract owner, they need to create new reward block.
+    *
+    */
+    function _removeRewardBlock(address sender, address recipient) internal returns (bool) {
+        if (isAddressRegistered(recipient) && sender != owner()) {
+            return _addressToBlockNumber.remove(recipient);
+        }
+        else {
+            return true;
+        }
+    }
+
+    /** 
+    *
+    * PURPOSE:
     *   - Helper function for doing division.
     *
     */
@@ -175,4 +198,3 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     }
  
 }
-
