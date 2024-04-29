@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
 * @title Feddy (FEDDY)
-* @notice Token burning, yield bearing memecoin. 
+* @notice Token burning, yield bearing ERC20 token. 
 **/
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -14,17 +14,18 @@ import "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
 
 contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     using EnumerableMap for EnumerableMap.AddressToUintMap;
+
         
     constructor() ERC20("Feddy", "FEDDY") ERC20Permit("Feddy") {
         _mint(msg.sender, 1000000000000000000000000000);
         burnBlock = block.number + BLOCK_INTERVAL;
     }
-
+     
     EnumerableMap.AddressToUintMap private _addressToBlockNumber;
-    EnumerableMap.AddressToUintMap private _addressToReward;
+    EnumerableMap.AddressToUintMap private _addressToBalance;
+    // EnumerableMap.AddressToUintMap  private _addressToReward;
 
     uint256 private constant SCALE = 1e18;
-    // uint256 public constant BLOCK_INTERVAL = 10;
     uint256 public constant BLOCK_INTERVAL = 1296000; // Default reward/burn interval is 30 days.
     uint256 public burnBlock;
     uint256 public burnPercent = 2;
@@ -40,11 +41,12 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     /** 
     *
     * PURPOSE:
-    *   - Rewards tokens from Treasury
+    *   - Rewards tokens from Treasury.
     * INFO:
-    *   - Each token holder can reward themselves tokens from Treasury every 1296000 blocks (approx. 30 days)
-    *   - This function needs to be run by every new token holder to set an initial reward block
-    *   - Contract owner cannot collect rewards
+    *   - Each token holder can reward themselves tokens from Treasury every 1296000 blocks (approx. 30 days).
+    *   - This function needs to be run by every new token holder to set an initial reward block and balance.
+    *   - An address will only receive a reward if current balance >= to balance at time of reward block creation.
+    *   - Contract owner cannot collect rewards.
     *
     */     
     function rewardTokens() public {
@@ -55,22 +57,24 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
         uint256 holderBalance = balanceOf(_msgSender());
         require(holderBalance > 0, "Senders balance needs to be greater than 0");
 
-        if (!isAddressRegistered(_msgSender())) {
-            _addressToReward.set(_msgSender(), 1);
+        if (!isBlockNumberRegistered(_msgSender()) || !isBalanceRegistered(_msgSender())) {
+            _addressToBalance.set(_msgSender(),holderBalance);
             _addressToBlockNumber.set(_msgSender(), (block.number + BLOCK_INTERVAL));
         }
 
+        uint256 rewardBalance =  _addressToBalance.get(_msgSender());
         uint256 rewardBlock =  _addressToBlockNumber.get(_msgSender());
-
-        if (block.number >= rewardBlock) {    
+       
+        if (block.number >= rewardBlock && holderBalance >= rewardBalance) {    
             uint256 totalRewardAmount = (ownerBalance * rewardPercent) / 100;
             uint256 totalSupply = totalSupply();
             uint256 holdersSupply = totalSupply - ownerBalance;
-            uint256 holderPercent = divideAndScale(holderBalance, holdersSupply);
+            uint256 holderPercent = divideAndScale(rewardBalance, holdersSupply);
             uint256 transferAmount = (totalRewardAmount * holderPercent) / SCALE;
 
             _addressToBlockNumber.set(_msgSender(), (block.number + BLOCK_INTERVAL));
             _transfer(owner(), _msgSender(), transferAmount);
+            _addressToBalance.set(_msgSender(), balanceOf(_msgSender()));
             
             emit TokensRewarded(_msgSender(), transferAmount);
         }
@@ -85,8 +89,8 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     *   - Burns tokens from Treasury.
     *
     * INFO:
-    *   - Anyone can instruct the contract to burn 2% of the Treasury every 1296000 blocks (approx. 30 days)
-    *   - Contract owner cannot burn tokens
+    *   - Anyone can instruct the contract to burn 2% of the Treasury every 1296000 blocks (approx. 30 days).
+    *   - Contract owner cannot burn tokens.
     *
     */     
     function burnTokens() public {
@@ -106,31 +110,11 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     /** 
     *
     * PURPOSE:
-    *   - Removes a reward lock for an address.
-    *
-    */     
-    function removeRewardLock() public returns (bool) {
-        emit RemovedRewardLock(_msgSender(), true);
-
-        if (isAddressRegistered(_msgSender())) {
-            _addressToBlockNumber.remove(_msgSender());
-        }
-        if (isAddressGettingReward(_msgSender())) {
-            return _addressToReward.remove(_msgSender());
-        }
-        else {
-            return true;
-        }
-    }
-
-    /** 
-    *
-    * PURPOSE:
     *   - Gets the reward block for an address.
     *
     */     
     function getRewardBlock() public view returns (uint256) {
-        if (isAddressRegistered(_msgSender())) {
+        if (isBlockNumberRegistered(_msgSender())) {
             return _addressToBlockNumber.get(_msgSender());
         }
         else {
@@ -141,11 +125,16 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     /** 
     *
     * PURPOSE:
-    *   - Checks if reward has been registered for an address.
+    *   - Gets the reward balance for an address.
     *
-    */  
-    function isAddressGettingReward(address addr) private view returns (bool) {
-        return _addressToReward.contains(addr);
+    */     
+    function getRewardBalance() public view returns (uint256) {
+        if (isBalanceRegistered(_msgSender())) {
+            return _addressToBalance.get(_msgSender());
+        }
+        else {
+            return 0;
+        }
     }
 
     /** 
@@ -154,11 +143,20 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     *   - Checks if block number has been registered for an address.
     *
     */  
-    function isAddressRegistered(address addr) private view returns (bool) {
+    function isBlockNumberRegistered(address addr) private view returns (bool) {
         return _addressToBlockNumber.contains(addr);
     }
+
+     /** 
+    *
+    * PURPOSE:
+    *   - Checks if balance has been registered for an address.
+    *
+    */  
+    function isBalanceRegistered(address addr) private view returns (bool) {
+        return _addressToBalance.contains(addr);
+    }
     
-   
     /** 
     *
     * PURPOSE:
@@ -181,7 +179,8 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     */
     function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
         require(_canTransfer(_msgSender()), "Sender is contract owner. Transfer aborted.");
-        require(!isAddressGettingReward(_msgSender()), "Address has a reward lock. Execute removeRewardLock() to enable transfers.");
+        require(_removeRewardBalance(_msgSender()), "Cannot remove reward balance. Transfer aborted.");
+        require(_removeRewardBlock(_msgSender()), "Cannot remove reward block. Transfer aborted.");
         return super.transfer(recipient, amount);
     }
 
@@ -199,7 +198,8 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
         uint256 amount
     ) public virtual override returns (bool) {
         require(_canTransfer(sender), "Sender is contract owner. Transfer aborted.");
-        require(!isAddressGettingReward(_msgSender()), "Address has a reward lock. Execute removeRewardLock() to enable transfers.");
+        require(_removeRewardBalance(sender), "Cannot remove reward balance. Transfer aborted.");
+        require(_removeRewardBlock(sender), "Cannot remove reward block. Transfer aborted.");
         return super.transferFrom(sender, recipient, amount);
     }
 
@@ -221,14 +221,31 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     /** 
     *
     * PURPOSE:
-    *   - Removes the reward block for an address.
+    *   - Removes the reward balance for an address.
     * INFO:
-    *   - If an address receives funds from an address other than the contract owner, they need to create new reward block.
+    *   - If an address sends funds from an address that has a reward scheduled, they need to create new reward block.
     *
     */
-    function _removeRewardBlock(address sender, address recipient) internal returns (bool) {
-        if (isAddressRegistered(recipient) && sender != owner()) {
-            return _addressToBlockNumber.remove(recipient);
+    function _removeRewardBalance(address sender) internal returns (bool) {
+        if (isBalanceRegistered(sender)) {
+            return _addressToBalance.remove(sender);
+        }
+        else {
+            return true;
+        }
+    }
+
+    /** 
+    *
+    * PURPOSE:
+    *   - Removes the reward block for an address.
+    * INFO:
+    *   - If an address sends funds from an address that has a reward scheduled, they need to create new reward block.
+    *
+    */
+    function _removeRewardBlock(address sender) internal returns (bool) {
+        if (isBlockNumberRegistered(sender)) {
+            return _addressToBlockNumber.remove(sender);
         }
         else {
             return true;
