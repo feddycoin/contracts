@@ -21,8 +21,10 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     }
 
     EnumerableMap.AddressToUintMap private _addressToBlockNumber;
+    EnumerableMap.AddressToUintMap private _addressToReward;
 
     uint256 private constant SCALE = 1e18;
+    // uint256 public constant BLOCK_INTERVAL = 10;
     uint256 public constant BLOCK_INTERVAL = 1296000; // Default reward/burn interval is 30 days.
     uint256 public burnBlock;
     uint256 public burnPercent = 2;
@@ -33,6 +35,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     event TokensRewarded(address indexed addr, uint256 amount);
     event NewBurnBlock(uint256 blockNumber);
     event TokensBurned(address indexed addr, uint256 amount);
+    event RemovedRewardLock(address indexed addr, bool rewardRemoved);
 
     /** 
     *
@@ -41,7 +44,6 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     * INFO:
     *   - Each token holder can reward themselves tokens from Treasury every 1296000 blocks (approx. 30 days)
     *   - This function needs to be run by every new token holder to set an initial reward block
-    *   - If holder receives tokens from another address, they will need to create a new initial reward block
     *   - Contract owner cannot collect rewards
     *
     */     
@@ -54,7 +56,8 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
         require(holderBalance > 0, "Senders balance needs to be greater than 0");
 
         if (!isAddressRegistered(_msgSender())) {
-           _addressToBlockNumber.set(_msgSender(), (block.number + BLOCK_INTERVAL));
+            _addressToReward.set(_msgSender(), 1);
+            _addressToBlockNumber.set(_msgSender(), (block.number + BLOCK_INTERVAL));
         }
 
         uint256 rewardBlock =  _addressToBlockNumber.get(_msgSender());
@@ -103,12 +106,58 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     /** 
     *
     * PURPOSE:
+    *   - Removes a reward lock for an address.
+    *
+    */     
+    function removeRewardLock() public returns (bool) {
+        emit RemovedRewardLock(_msgSender(), true);
+
+        if (isAddressRegistered(_msgSender())) {
+            _addressToBlockNumber.remove(_msgSender());
+        }
+        if (isAddressGettingReward(_msgSender())) {
+            return _addressToReward.remove(_msgSender());
+        }
+        else {
+            return true;
+        }
+    }
+
+    /** 
+    *
+    * PURPOSE:
+    *   - Gets the reward block for an address.
+    *
+    */     
+    function getRewardBlock() public view returns (uint256) {
+        if (isAddressRegistered(_msgSender())) {
+            return _addressToBlockNumber.get(_msgSender());
+        }
+        else {
+            return 0;
+        }
+    }
+
+    /** 
+    *
+    * PURPOSE:
+    *   - Checks if reward has been registered for an address.
+    *
+    */  
+    function isAddressGettingReward(address addr) private view returns (bool) {
+        return _addressToReward.contains(addr);
+    }
+
+    /** 
+    *
+    * PURPOSE:
     *   - Checks if block number has been registered for an address.
     *
     */  
     function isAddressRegistered(address addr) private view returns (bool) {
         return _addressToBlockNumber.contains(addr);
     }
+    
    
     /** 
     *
@@ -132,7 +181,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     */
     function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
         require(_canTransfer(_msgSender()), "Sender is contract owner. Transfer aborted.");
-        require(_removeRewardBlock(_msgSender(), recipient), "Cannot remove reward block. Transfer aborted.");
+        require(!isAddressGettingReward(_msgSender()), "Address has a reward lock. Execute removeRewardLock() to enable transfers.");
         return super.transfer(recipient, amount);
     }
 
@@ -150,7 +199,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
         uint256 amount
     ) public virtual override returns (bool) {
         require(_canTransfer(sender), "Sender is contract owner. Transfer aborted.");
-        require(_removeRewardBlock(sender, recipient), "Cannot remove reward block. Transfer aborted.");
+        require(!isAddressGettingReward(_msgSender()), "Address has a reward lock. Execute removeRewardLock() to enable transfers.");
         return super.transferFrom(sender, recipient, amount);
     }
 
