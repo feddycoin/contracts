@@ -1,1 +1,1 @@
-# Feddy memecoin ERC20 Contract
+# Feddy ERC20 Contract
