@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
 * @title Feddy (FEDDY)
-* @notice Token burning, yield bearing ERC20 token. 
+* @notice Feddy the Based Bear  c(·_·)c 
 **/
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -23,7 +23,6 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
      
     EnumerableMap.AddressToUintMap private _addressToBlockNumber;
     EnumerableMap.AddressToUintMap private _addressToBalance;
-    // EnumerableMap.AddressToUintMap  private _addressToReward;
 
     uint256 private constant SCALE = 1e18;
     uint256 public constant BLOCK_INTERVAL = 1296000; // Default reward/burn interval is 30 days.
@@ -33,10 +32,10 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     bool    public isOwnerTranfersDisabled = false;
 
     event NewRewardBlock(address indexed addr, uint256 blockNumber);
+    event NewRewardBalance(address indexed addr, uint256 amount);
     event TokensRewarded(address indexed addr, uint256 amount);
     event NewBurnBlock(uint256 blockNumber);
     event TokensBurned(address indexed addr, uint256 amount);
-    event RemovedRewardLock(address indexed addr, bool rewardRemoved);
 
     /** 
     *
@@ -45,7 +44,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     * INFO:
     *   - Each token holder can reward themselves tokens from Treasury every 1296000 blocks (approx. 30 days).
     *   - This function needs to be run by every new token holder to set an initial reward block and balance.
-    *   - An address will only receive a reward if current balance >= to balance at time of reward block creation.
+    *   - If an address transfers tokens after executing this function, they will need to re-run to create a new reward balance and block.
     *   - Contract owner cannot collect rewards.
     *
     */     
@@ -78,7 +77,8 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
             
             emit TokensRewarded(_msgSender(), transferAmount);
         }
-           
+
+        emit NewRewardBalance(_msgSender(), _addressToBalance.get(_msgSender()));   
         emit NewRewardBlock(_msgSender(), _addressToBlockNumber.get(_msgSender()));
         
     }
@@ -175,10 +175,11 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     *   - Overides transfer function.
     * INFO:
     *   - Restricts contract owner ability to transfer funds.
+    *   - Removes reward block number and balance for sender address 
     *
     */
     function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
-        require(_canTransfer(_msgSender()), "Sender is contract owner. Transfer aborted.");
+        require(_canTransfer(_msgSender(), recipient), "Sender/recipient is contract owner. Transfer aborted.");
         require(_removeRewardBalance(_msgSender()), "Cannot remove reward balance. Transfer aborted.");
         require(_removeRewardBlock(_msgSender()), "Cannot remove reward block. Transfer aborted.");
         return super.transfer(recipient, amount);
@@ -190,6 +191,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     *   - Overides transferFrom function.
     * INFO:
     *   - Restricts contract owner ability to transfer funds.
+    *   - Removes reward block number and balance for sender address
     *
     */
     function transferFrom(
@@ -197,7 +199,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
         address recipient,
         uint256 amount
     ) public virtual override returns (bool) {
-        require(_canTransfer(sender), "Sender is contract owner. Transfer aborted.");
+        require(_canTransfer(sender, recipient), "Sender/recipient is contract owner. Transfer aborted.");
         require(_removeRewardBalance(sender), "Cannot remove reward balance. Transfer aborted.");
         require(_removeRewardBlock(sender), "Cannot remove reward block. Transfer aborted.");
         return super.transferFrom(sender, recipient, amount);
@@ -211,8 +213,8 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     *   - Used by transfer and transferFrom override functions.
     *
     */
-    function _canTransfer(address sender) internal view returns (bool) {
-        if (sender == owner() && isOwnerTranfersDisabled == true) {
+    function _canTransfer(address sender, address recipient) internal view returns (bool) {
+        if ((sender == owner() || recipient ==  owner()) && isOwnerTranfersDisabled == true) {
             return false;
         }
         return true;
@@ -223,7 +225,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     * PURPOSE:
     *   - Removes the reward balance for an address.
     * INFO:
-    *   - If an address sends funds from an address that has a reward scheduled, they need to create new reward block.
+    *   - If an address sends funds from an address that has a reward scheduled, they need to re-execute rewardTokens().
     *
     */
     function _removeRewardBalance(address sender) internal returns (bool) {
@@ -240,7 +242,7 @@ contract Feddy is ERC20, ERC20Permit, Ownable(msg.sender) {
     * PURPOSE:
     *   - Removes the reward block for an address.
     * INFO:
-    *   - If an address sends funds from an address that has a reward scheduled, they need to create new reward block.
+    *   - If an address sends funds from an address that has a reward scheduled, they need to re-execute rewardTokens().
     *
     */
     function _removeRewardBlock(address sender) internal returns (bool) {
